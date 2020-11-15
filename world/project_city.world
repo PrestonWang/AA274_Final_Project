@@ -884,6 +884,11 @@
             </box>
           </geometry>
           <material>
+            <script>
+              <uri>model://burger/materials/scripts</uri>
+              <uri>model://burger/materials/textures</uri>
+              <name>burger</name>
+            </script>
           </material>
         </visual>
         <self_collide>0</self_collide>

@@ -8,7 +8,7 @@ import tf
 import numpy as np
 from numpy import linalg
 from utils import wrapToPi
-
+from HW1.P2_pose_stabilization import compute_control
 
 class Controller:
 
@@ -38,8 +38,9 @@ class Controller:
 	# compute the right control input here
 	
 	### YOUR CODE HERE ###
-
-
+	#use pose stabilization controller. Note that t is not used
+	#Not sure if this is correct. -KS
+	cmd_x_dot, cmd_theta_dot = self.compute_control(self.x,self.y,self.theta,0)
 
 	### END OF YOUR CODE ###        
 

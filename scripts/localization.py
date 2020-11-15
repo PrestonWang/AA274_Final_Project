@@ -97,6 +97,8 @@ class LocalizationVisualizer:
 
         if self.params.mc:
             self.particles_pub = rospy.Publisher('particle_filter', PointCloud, queue_size=10)
+	#else:
+        #    self.particles_pub = rospy.Publisher('EKF', Pose2D, queue_size=10)
 
     def scan_callback(self, msg):
         if self.EKF:

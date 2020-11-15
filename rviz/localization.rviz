@@ -57,7 +57,7 @@ Visualization Manager:
         EKF:
           Value: true
         MCL:
-          Value: true
+          Value: false
         base_camera:
           Value: false
         base_footprint:
