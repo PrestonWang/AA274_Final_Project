@@ -6,18 +6,22 @@ import rospy
 from asl_turtlebot.msg import DetectedObject
 from gazebo_msgs.msg import ModelStates
 from geometry_msgs.msg import Twist, PoseArray, Pose2D, PoseStamped
-from std_msgs.msg import Float32MultiArray, String
+from std_msgs.msg import Float32MultiArray, String, Int8
 import tf
 
 class Mode(Enum):
     """State machine modes. Feel free to change."""
-    IDLE = 1
-    POSE = 2
-    STOP = 3
-    CROSS = 4
-    NAV = 5
-    MANUAL = 6
+    IDLE = 0
+    NAV = 1
+    STOP = 2
+    PICKUP = 3
+    MANUAL = 4
 
+class NAV_MODE(Enum):
+    IDLE = 0
+    ALIGN = 1
+    TRACK = 2
+    PARK = 3
 
 class SupervisorParams:
 
@@ -41,10 +45,16 @@ class SupervisorParams:
 
         # Minimum distance from a stop sign to obey it
         self.stop_min_dist = rospy.get_param("~stop_min_dist", 0.5)
+        self.ignore_stop_time = rospy.get_param("~ignore_stop_time", 3.)
 
         # Time taken to cross an intersection
-        self.crossing_time = rospy.get_param("~crossing_time", 3.)
+        self.pickup_time = rospy.get_param("~pickup_time", 5.)
 
+
+        # home locations
+        self.x_home = rospy.get_param("~xHome", 3.15)
+        self.y_home = rospy.get_param("~yHome", 1.16)
+        self.theta_home = rospy.get_Param("thetaHome", 0.)
         if verbose:
             print("SupervisorParams:")
             print("    use_gazebo = {}".format(self.use_gazebo))
@@ -70,6 +80,8 @@ class Supervisor:
         self.x_g = 0
         self.y_g = 0
         self.theta_g = 0
+
+        # home state
 
         # Current mode
         self.mode = Mode.IDLE
@@ -103,7 +115,10 @@ class Supervisor:
             self.x_g, self.y_g, self.theta_g = 1.5, -4., 0.
             self.mode = Mode.NAV
         
-
+        # adding itneraction to navigator.py
+        self.navigator_mode = 0
+        self.turtlebot_mode_pub = rospy.Publisher('/turtlebot_mode', Int8, queue_size=10)
+        rospy.Subscriber('/naviator_mode', Int8, self.navigator_mode)
     ########## SUBSCRIBER CALLBACKS ##########
 
     def gazebo_callback(self, msg):
@@ -198,7 +213,7 @@ class Supervisor:
         """ initiates a stop sign maneuver """
 
         self.stop_sign_start = rospy.get_rostime()
-        self.mode = Mode.STOP
+        self.switch_mode(Mode.STOP)
 
     def has_stopped(self):
         """ checks if stop sign maneuver is over """
@@ -206,18 +221,22 @@ class Supervisor:
         return self.mode == Mode.STOP and \
                rospy.get_rostime() - self.stop_sign_start > rospy.Duration.from_sec(self.params.stop_time)
 
-    def init_crossing(self):
+    def init_pickup(self):
         """ initiates an intersection crossing maneuver """
 
-        self.cross_start = rospy.get_rostime()
-        self.mode = Mode.CROSS
+        self.pickup_start = rospy.get_rostime()
+        self.switch_mode(Mode.PICKUP)
 
-    def has_crossed(self):
+    def has_pickedup(self):
         """ checks if crossing maneuver is over """
 
-        return self.mode == Mode.CROSS and \
-               rospy.get_rostime() - self.cross_start > rospy.Duration.from_sec(self.params.crossing_time)
-
+        return self.mode == Mode.PICKUP and \
+               rospy.get_rostime() - self.pickup_start > rospy.Duration.from_sec(self.params.pickup_time)
+    
+    def switch_mode(self, new_mode):
+        rospy.loginfo("Switching from %s -> %s", self.mode, new_mode)
+        self.prev_mode = self.mode
+        self.mode = new_mode
     ########## Code ends here ##########
 
 
@@ -237,43 +256,35 @@ class Supervisor:
             except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
                 pass
 
-        # logs the current mode
-        if self.prev_mode != self.mode:
-            rospy.loginfo("Current mode: %s", self.mode)
-            self.prev_mode = self.mode
-
         ########## Code starts here ##########
         # TODO: Currently the state machine will just go to the pose without stopping
         #       at the stop sign.
 
         if self.mode == Mode.IDLE:
+            pass
             # Send zero velocity
-            self.stay_idle()
-
-        elif self.mode == Mode.POSE:
-            # Moving towards a desired pose
-            if self.close_to(self.x_g, self.y_g, self.theta_g):
-                self.mode = Mode.IDLE
-            else:
-                self.go_to_pose()
 
         elif self.mode == Mode.STOP:
             # At a stop sign
-            self.nav_to_pose()
-
-        elif self.mode == Mode.CROSS:
-            # Crossing an intersection
-            self.nav_to_pose()
+            if self.has_stopped():
+                self.mode = self.switch_mode(self.prev_mode)
 
         elif self.mode == Mode.NAV:
-            if self.close_to(self.x_g, self.y_g, self.theta_g):
-                self.mode = Mode.IDLE
+            if self.navigator_mode == NAV_MODE.PARK:
+                self.mode = self.init_pickup()
             else:
                 self.nav_to_pose()
+        elif self.mode == Mode.PICKUP:
+            if self.has_pickedup():
+                self.mode = self.switch_mode(Mode.NAV)
+                self.x_g = self.params.x_home
+                self.y_g = self.params.y_home
+                self.theta_g = self.params.theta_home
 
         else:
             raise Exception("This mode is not supported: {}".format(str(self.mode)))
-
+        
+        self.turtlebot_mode_pub.publish(self.mode)
         ############ Code ends here ############
 
     def run(self):

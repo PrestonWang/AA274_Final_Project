@@ -3,7 +3,7 @@
 import rospy
 from nav_msgs.msg import OccupancyGrid, MapMetaData, Path
 from geometry_msgs.msg import Twist, Pose2D, PoseStamped
-from std_msgs.msg import String
+from std_msgs.msg import String, Int8
 import tf
 import numpy as np
 from numpy import linalg
@@ -24,6 +24,15 @@ class Mode(Enum):
     ALIGN = 1
     TRACK = 2
     PARK = 3
+
+class TURTLEBOT_MODE(Enum):
+    IDLE = 0
+    POSE = 1
+    STOP = 2
+    CROSS = 3
+    NAV = 4
+    MANUAL = 5
+    PICKUP = 6
 
 class Navigator:
     """
@@ -107,6 +116,11 @@ class Navigator:
         rospy.Subscriber('/map_metadata', MapMetaData, self.map_md_callback)
         rospy.Subscriber('/cmd_nav', Pose2D, self.cmd_nav_callback)
 
+        #interaction with Supervisor.py
+        self.turtlebot_mode = 0
+        self.prev_mode = None
+        rospy.Subscriber('/turtlebot_mode', Int8, self.turtlebot_mode)
+        self.navigator_mode_pub = rospy.Publisher('navigator_mode', Int8, queue_size = 10)
         print "finished init"
         
     def dyn_cfg_callback(self, config, level):
@@ -194,6 +208,7 @@ class Navigator:
 
     def switch_mode(self, new_mode):
         rospy.loginfo("Switching from %s -> %s", self.mode, new_mode)
+        self.prev_mode = self.mode
         self.mode = new_mode
 
     def publish_planned_path(self, path, publisher):
@@ -346,7 +361,23 @@ class Navigator:
                 pass
 
             # STATE MACHINE LOGIC
+            # check Supervisor Mode and adjust mode as needed
+            if self.turtlebot_mode == TURTLEBOT_MODE.IDLE:
+                if self.mode != Mode.IDLE:
+                    self.switch_mode(Mode.IDLE)
+            elif self.turtlebot_mode == TURTLEBOT_MODE.STOP:
+                if self.mode != Mode.IDLE:
+                    self.switch_mode(Mode.IDLE)
+            elif self.turtlebot_mode == TURTLEBOT_MODE.NAV:
+                if self.prev_mode == Mode.TRACK:
+                    self.switch_mode(Mode.TRACK)
+                else:
+                    self.switch_mode(Mode.ALIGN)
+            elif self.turtlebot_mode == TURTLEBOT_MODE.PICKUP:
+                if self.mode != Mode.IDLE:
+                    self.switch_mode(Mode.IDLE)
             # some transitions handled by callbacks
+
             if self.mode == Mode.IDLE:
                 pass
             elif self.mode == Mode.ALIGN:
@@ -368,9 +399,8 @@ class Navigator:
                     self.x_g = None
                     self.y_g = None
                     self.theta_g = None
-                    self.switch_mode(Mode.IDLE)
-
             self.publish_control()
+            self.navigator_mode_pub.publish(self.mode)
             rate.sleep()
 
 if __name__ == '__main__':    
